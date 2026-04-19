@@ -61,7 +61,7 @@ _REQUEST_MODEL = {
                 "text": "What do you want to access?",
                 "emoji": True,
             },
-            "optional": True,
+            "optional": False,
         },
         {
             "type": "input",
@@ -95,7 +95,7 @@ _REQUEST_MODEL = {
                 "text": "What do you need access for?",
                 "emoji": True,
             },
-            "optional": True,
+            "optional": False,
         },
     ],
 }
