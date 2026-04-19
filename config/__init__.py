@@ -1,4 +1,5 @@
 import threading
+
 from .config import Config, ConfigError
 
 _instance: Config | None = None

@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import logging
 import time
 
 import config
@@ -9,12 +10,19 @@ from tailscale.models import ListTailnetDevicesFields
 
 from .home import _APP_ERROR
 
+logger = logging.getLogger(__name__)
+
 _SERVICES_TTL_SECONDS = 60
+_SERVICES_STALENESS_ALARM_MULTIPLIER = 5  # warn if last success is >5x TTL old
 _services_cache: tuple[float, list[dict]] | None = None  # (expires_at, options)
 _services_refresh_lock = asyncio.Lock()
+_last_successful_refresh: float | None = None  # monotonic seconds
 
-# Populated as a side-effect of _fetch_access_services so the grant flow can
-# resolve the chosen hostname to a Tailscale IP without a second API call.
+# Strong refs to fire-and-forget refresh tasks — asyncio only weak-refs tasks.
+_refresh_tasks: set[asyncio.Task] = set()
+
+# Built fresh every refresh so that a renamed/removed/re-IPed device cannot
+# return a stale mapping. Never mutate in place from the outside.
 _device_ip_by_host: dict[str, str] = {}
 
 
@@ -24,15 +32,8 @@ def get_device_ip(hostname: str) -> str | None:
 
 
 def _get_resource_tags() -> list[str]:
-    """Parse `TAILSCALE_RESOURCE_TAGS` (comma-separated) from env.
-
-    Tolerates surrounding quotes and an inline ``# comment`` that the
-    simple .env loader leaves in place.
-    """
-    raw = config.get("TAILSCALE_RESOURCE_TAGS", "") or ""
-    if "#" in raw:
-        raw = raw.split("#", 1)[0]
-    raw = raw.strip().strip('"').strip("'")
+    """Parse `TAILSCALE_RESOURCE_TAGS` (comma-separated) from env."""
+    raw = (config.get("TAILSCALE_RESOURCE_TAGS", "") or "").strip()
     return [t.strip() for t in raw.split(",") if t.strip()]
 
 
@@ -176,9 +177,12 @@ def format_duration(value: str | int | None) -> str:
     if isinstance(value, str) and value.lower() == "permanent":
         return "Permanent"
     try:
-        return _fmt(int(value))
+        minutes = int(value)
     except (TypeError, ValueError):
         return str(value)
+    if minutes <= 0:
+        return "—"
+    return _fmt(minutes)
 
 
 def _fmt(minutes: int) -> str:
@@ -193,6 +197,10 @@ def _fmt(minutes: int) -> str:
 
 def calculateAccessDurationIntervals() -> list[dict]:
     interval = int(config.ACCESS_DURATION_INTERVAL_IN_MINS)
+    if interval <= 0:
+        raise ValueError(
+            f"ACCESS_DURATION_INTERVAL_IN_MINS must be positive, got {interval}"
+        )
     options = []
     seen: set[int] = set()
 
@@ -232,7 +240,14 @@ def calculateAccessDurationIntervals() -> list[dict]:
 
 
 async def _fetch_access_services() -> list[dict]:
+    """Fetch devices from Tailscale and rebuild the hostname→IP index atomically.
+
+    Returns the flat list of static_select options. Also replaces the
+    module-level ``_device_ip_by_host`` so that stale entries are purged
+    when devices are renamed or removed.
+    """
     options: list[dict] = []
+    fresh_ip_map: dict[str, str] = {}
     async with AuthenticatedClient(
         token=config.TAILSCALE_API_KEY, raise_on_unexpected_status=True
     ) as client:
@@ -244,9 +259,12 @@ async def _fetch_access_services() -> list[dict]:
             tags=tags if tags else UNSET,
         )
         if resp is None:
-            print("no response body from Tailscale")
+            logger.warning("no response body from Tailscale list-devices")
             return options
-        print(f"tailscale: {len(resp.devices)} device(s) matched tags={tags or 'ANY'}")
+        logger.info(
+            "tailscale: %d device(s) matched tags=%s",
+            len(resp.devices), tags or "ANY",
+        )
 
         seen: set[str] = set()
 
@@ -265,36 +283,54 @@ async def _fetch_access_services() -> list[dict]:
             if isinstance(d.hostname, str):
                 add(d.hostname)
                 if isinstance(d.addresses, list) and d.addresses:
-                    _device_ip_by_host[d.hostname] = d.addresses[0]
+                    fresh_ip_map[d.hostname] = d.addresses[0]
             if isinstance(d.tags, list):
                 for tag in d.tags:
                     add(tag)
 
+    # Atomic swap — dict assignment is atomic under the GIL, so readers
+    # calling get_device_ip() see either the old map or the new map.
+    _device_ip_by_host.clear()
+    _device_ip_by_host.update(fresh_ip_map)
     return options
 
 
+def _services_cache_age_seconds() -> float | None:
+    if _last_successful_refresh is None:
+        return None
+    return time.monotonic() - _last_successful_refresh
+
+
 async def _refresh_services_cache() -> None:
-    """Fetch fresh data and update the cache. Swallows errors so callers never block on a failed refresh."""
-    global _services_cache
+    """Fetch fresh data and update the cache. Logs and keeps serving stale data on failure."""
+    global _services_cache, _last_successful_refresh
     if _services_refresh_lock.locked():
         return  # another refresh is already running
     async with _services_refresh_lock:
         try:
             options = await _fetch_access_services()
             _services_cache = (time.monotonic() + _SERVICES_TTL_SECONDS, options)
+            _last_successful_refresh = time.monotonic()
         except Exception as e:
-            print(f"tailscale: cache refresh failed: {e}")
+            logger.error("tailscale: cache refresh failed: %s", e)
+            age = _services_cache_age_seconds()
+            if age is not None and age > _SERVICES_STALENESS_ALARM_MULTIPLIER * _SERVICES_TTL_SECONDS:
+                logger.warning(
+                    "tailscale: serving cache stale by %.0fs (Tailscale unreachable?)",
+                    age,
+                )
 
 
 async def warm_services_cache() -> None:
     """Blocking warm-up — call once at startup so the first slash command is instant."""
-    global _services_cache
+    global _services_cache, _last_successful_refresh
     async with _services_refresh_lock:
         try:
             options = await _fetch_access_services()
             _services_cache = (time.monotonic() + _SERVICES_TTL_SECONDS, options)
+            _last_successful_refresh = time.monotonic()
         except Exception as e:
-            print(f"tailscale: cache warm-up failed: {e}")
+            logger.error("tailscale: cache warm-up failed: %s", e)
 
 
 async def getAccessServicesList() -> list[dict]:
@@ -304,7 +340,7 @@ async def getAccessServicesList() -> list[dict]:
     Stale cache: returns the stale entry immediately and refreshes in the
     background so the next call sees fresh data without paying the latency.
     """
-    global _services_cache
+    global _services_cache, _last_successful_refresh
     now = time.monotonic()
 
     if _services_cache is None:
@@ -313,11 +349,14 @@ async def getAccessServicesList() -> list[dict]:
                 try:
                     options = await _fetch_access_services()
                     _services_cache = (now + _SERVICES_TTL_SECONDS, options)
+                    _last_successful_refresh = time.monotonic()
                 except Exception as e:
-                    print(f"tailscale: initial fetch failed: {e}")
+                    logger.error("tailscale: initial fetch failed: %s", e)
                     return []
     elif _services_cache[0] <= now:
-        asyncio.create_task(_refresh_services_cache())
+        task = asyncio.create_task(_refresh_services_cache())
+        _refresh_tasks.add(task)
+        task.add_done_callback(_refresh_tasks.discard)
 
     return list(_services_cache[1]) if _services_cache else []
 

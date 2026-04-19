@@ -1,42 +1,90 @@
+import asyncio
 import logging
+import time
+
+from slack_sdk.errors import SlackApiError
 
 import config
 import db
-from assets.tailscale import admin_request_blocks, format_duration
+from assets.tailscale import admin_request_blocks
 
 from . import grant
 
 logger = logging.getLogger(__name__)
+
+# Keep strong refs to fire-and-forget tasks — asyncio only holds weak refs,
+# so a task dropped here could be garbage-collected mid-flight.
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn(coro) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
 
 
 async def always_confirm(ack):
     await ack()
 
 
-def _admin_ids() -> list[str]:
+def _admin_entries() -> list[str]:
     """Parse `ADMIN_SLACK_USER_IDS` (comma-separated) from env.
 
     Entries may be either Slack user ids (e.g. ``U0123``) or email
     addresses; emails are resolved to ids at send time via
     ``users.lookupByEmail``.
     """
-    raw = config.get("ADMIN_SLACK_USER_IDS", "") or ""
-    if "#" in raw:
-        raw = raw.split("#", 1)[0]
-    raw = raw.strip().strip('"').strip("'")
+    raw = (config.get("ADMIN_SLACK_USER_IDS", "") or "").strip()
     return [x.strip() for x in raw.split(",") if x.strip()]
 
 
+# ---------------------------------------------------------------------------
+# user-id-by-email cache — same lifetime as grant.resolve_email so admin
+# fan-out doesn't hit users.lookupByEmail on every single request dispatch.
+# ---------------------------------------------------------------------------
+
+_EMAIL_CACHE_TTL_SECONDS = 300
+_email_to_uid_cache: dict[str, tuple[float, str | None]] = {}
+
+
 async def _resolve_admin(client, value: str) -> str | None:
-    """Return a Slack user id; look up by email when `value` looks like one."""
+    """Return a Slack user id; look up by email when value looks like one."""
     if "@" not in value:
         return value
+    now = time.monotonic()
+    cached = _email_to_uid_cache.get(value)
+    if cached and cached[0] > now:
+        return cached[1]
     try:
         resp = await client.users_lookupByEmail(email=value)
-        return resp["user"]["id"]
-    except Exception as e:
-        logger.error("failed to resolve admin email %s: %s", value, e)
+    except SlackApiError as e:
+        logger.error("users.lookupByEmail failed for %s: %s", value, e.response.get("error"))
         return None
+    uid = resp["user"]["id"]
+    _email_to_uid_cache[value] = (now + _EMAIL_CACHE_TTL_SECONDS, uid)
+    return uid
+
+
+async def resolved_admin_ids(client) -> list[str]:
+    """Return the configured admin list with emails resolved to user ids.
+
+    Resolution is concurrent; failed lookups are dropped (logged inside
+    ``_resolve_admin``).
+    """
+    entries = _admin_entries()
+    if not entries:
+        return []
+    results = await asyncio.gather(
+        *(_resolve_admin(client, e) for e in entries),
+        return_exceptions=True,
+    )
+    return [r for r in results if isinstance(r, str)]
+
+
+# ---------------------------------------------------------------------------
+# request dispatch
+# ---------------------------------------------------------------------------
 
 
 async def send_access_request_to_admins(
@@ -47,16 +95,14 @@ async def send_access_request_to_admins(
     duration: str,
     reason: str | None,
 ) -> str:
-    """Persist the request, DM every configured admin with approve/deny buttons.
-
-    Returns the new request id (Mongo ObjectId as string).
-    """
+    """Persist the request and DM every configured admin (in parallel) with
+    approve/deny buttons. Returns the new request id."""
     request_id = await db.create_request(
         user_id=requester_id, device=device, duration=duration, reason=reason
     )
 
-    admins = _admin_ids()
-    if not admins:
+    admin_ids = await resolved_admin_ids(client)
+    if not admin_ids:
         logger.warning(
             "no admins configured (ADMIN_SLACK_USER_IDS); request %s has no reviewers",
             request_id,
@@ -72,20 +118,45 @@ async def send_access_request_to_admins(
     )
     fallback = f"Access request from <@{requester_id}>"
 
-    for admin in admins:
-        admin_id = await _resolve_admin(client, admin)
-        if not admin_id:
-            continue
+    async def _send(admin_id: str) -> None:
         try:
-            await client.chat_postMessage(
-                channel=admin_id, text=fallback, blocks=blocks
-            )
-        except Exception as e:
+            await client.chat_postMessage(channel=admin_id, text=fallback, blocks=blocks)
+        except SlackApiError as e:
             logger.error(
-                "failed to DM admin %s for request %s: %s", admin_id, request_id, e
+                "chat.postMessage to admin %s for request %s: %s",
+                admin_id, request_id, e.response.get("error"),
             )
 
+    await asyncio.gather(*(_send(a) for a in admin_ids), return_exceptions=True)
     return request_id
+
+
+# ---------------------------------------------------------------------------
+# approve / deny button handlers
+# ---------------------------------------------------------------------------
+
+
+async def _update_admin_message(client, body: dict, *, request_id: str, decision: str, admin_id: str) -> None:
+    """Disable the buttons on the admin's DM so they can't be clicked again."""
+    try:
+        await client.chat_update(
+            channel=body["channel"]["id"],
+            ts=body["message"]["ts"],
+            text=f"Request {decision} by <@{admin_id}>",
+            blocks=[
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f"Request `{request_id}` *{decision}* by <@{admin_id}>",
+                    },
+                }
+            ],
+        )
+    except SlackApiError as e:
+        logger.error(
+            "chat.update for request %s: %s", request_id, e.response.get("error")
+        )
 
 
 async def _decide(ack, body, client, action, decision: str) -> None:
@@ -99,89 +170,35 @@ async def _decide(ack, body, client, action, decision: str) -> None:
     if not updated:
         logger.info(
             "request %s already decided when %s clicked %s",
-            request_id,
-            admin_id,
-            decision,
+            request_id, admin_id, decision,
         )
         return
 
-    print(f"[access] request {request_id} {decision} by {admin_id}")
+    logger.info("[access] request %s %s by %s", request_id, decision, admin_id)
 
-    # Run the real ACL grant only on approval. Failures inside
-    # perform_grant are logged and the DB row is marked 'failed'; we
-    # still notify the requester so they know the request was seen.
+    # Flip the admin's buttons immediately — latency here matters for UX.
+    await _update_admin_message(
+        client, body, request_id=request_id, decision=decision, admin_id=admin_id
+    )
+
     req = await db.get_request(request_id)
-    if decision == "approved" and req:
-        ok = await grant.perform_grant(client, request_id=request_id, req=req)
-        if not ok:
-            logger.error("grant pipeline failed for %s", request_id)
-        # Re-read so the DM below reflects the grant_state.
-        req = await db.get_request(request_id)
+    if not req:
+        logger.error("request %s vanished between decision and dispatch", request_id)
+        return
 
-    # Notify the original requester via DM.
-    if req:
-        try:
-            await client.chat_postMessage(
-                channel=req["user_id"],
-                text=f"Your access request was {decision}",
-                blocks=[
-                    {
-                        "type": "section",
-                        "text": {
-                            "type": "mrkdwn",
-                            "text": (
-                                "Your Tailscale access request was "
-                                f"*{decision}* by <@{admin_id}>."
-                            ),
-                        },
-                    },
-                    {
-                        "type": "section",
-                        "fields": [
-                            {
-                                "type": "mrkdwn",
-                                "text": f"*Device/Tag:*\n{req.get('device') or '—'}",
-                            },
-                            {
-                                "type": "mrkdwn",
-                                "text": f"*Duration:*\n{format_duration(req.get('duration'))}",
-                            },
-                            {
-                                "type": "mrkdwn",
-                                "text": f"*Reason:*\n{req.get('reason') or '—'}",
-                            },
-                        ],
-                    },
-                ],
+    if decision == "approved":
+        # Fire-and-forget: the button handler should not block on the
+        # full Tailscale round-trip. The grant module owns its own DB
+        # writes and requester DM so the user never sees a bogus
+        # "approved" message when the ACL failed to mutate.
+        _spawn(
+            grant.perform_grant(
+                client, request_id=request_id, req=req, admin_id=admin_id
             )
-        except Exception as e:
-            logger.error(
-                "failed to notify requester %s for %s: %s",
-                req.get("user_id"),
-                request_id,
-                e,
-            )
-
-    # Disable the buttons on the admin's DM so they can't be clicked again.
-    try:
-        await client.chat_update(
-            channel=body["channel"]["id"],
-            ts=body["message"]["ts"],
-            text=f"Request {decision} by <@{admin_id}>",
-            blocks=[
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": (
-                            f"Request `{request_id}` *{decision}* by <@{admin_id}>"
-                        ),
-                    },
-                }
-            ],
         )
-    except Exception as e:
-        logger.error("failed to update admin message for %s: %s", request_id, e)
+    else:
+        # Denied — short-circuit straight to the DM; no ACL work to do.
+        await grant.perform_denial_notice(client, req=req, admin_id=admin_id)
 
 
 async def access_request_approve(ack, body, client, action) -> None:

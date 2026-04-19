@@ -94,7 +94,9 @@ class Device:
     @classmethod
     def from_dict(cls, src: Dict[str, Any]) -> "Device":
         data = dict(src)
-        device_id = data.pop("id", "")
+        if "id" not in data or not data["id"]:
+            raise ValueError(f"Tailscale Device payload is missing 'id': {src!r}")
+        device_id = data.pop("id")
 
         # camelCase → snake_case for the known mappings
         kwargs: Dict[str, Any] = {"id": device_id}

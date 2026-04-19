@@ -1,0 +1,41 @@
+[project]
+name = "accesshub"
+version = "0.0.0"
+description = "Slack-driven Tailscale access-request bot."
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["venv", "tailscale/__pycache__", "__pycache__"]
+
+[tool.ruff.lint]
+# Conservative set — things that are almost always bugs or obvious improvements.
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes (unused imports/variables, undefined names)
+    "W",    # pycodestyle warnings
+    "I",    # import sorting
+    "B",    # bugbear (common Python gotchas)
+    "UP",   # pyupgrade (modern syntax)
+    "SIM",  # code simplification
+    "RUF",  # ruff's own rules
+]
+ignore = [
+    "E501",  # let ruff-format own line length
+    "B008",  # function calls in default args — used on purpose in a few places
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["config", "db", "assets", "slackbot", "tailscale"]
+
+[tool.pyright]
+include = ["assets", "config", "db", "slackbot", "tailscale", "main.py"]
+exclude = ["venv", "**/__pycache__"]
+typeCheckingMode = "basic"
+reportMissingImports = "warning"
+reportOptionalMemberAccess = "warning"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

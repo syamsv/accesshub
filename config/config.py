@@ -51,7 +51,10 @@ class Config:
           KEY=value
           KEY="quoted value"
           KEY='quoted value'
-          # comments
+          KEY="value"         # trailing comment (only after quoted value)
+          KEY=value           bare trailing text is NOT a comment — entire
+                              rest-of-line is the value (shell-style).
+          # full-line comments
           export KEY=value
         """
         env_path = Path(path)
@@ -69,13 +72,25 @@ class Config:
                     continue
                 key, _, value = line.partition("=")
                 key = key.strip()
-                value = value.strip()
-                # strip surrounding quotes
-                if len(value) >= 2 and value[0] in ('"', "'") and value[0] == value[-1]:
-                    value = value[1:-1]
+                value = self._parse_value(value.strip())
                 # system env takes precedence over .env file
                 if key and key not in os.environ:
                     os.environ[key] = value
+
+    @staticmethod
+    def _parse_value(value: str) -> str:
+        """Strip surrounding quotes, and if the value opens with a quote,
+        drop anything after the closing quote (so ``"v" # note`` → ``v``).
+        Unquoted values are taken as-is."""
+        if not value:
+            return value
+        quote = value[0]
+        if quote in ('"', "'"):
+            end = value.find(quote, 1)
+            if end != -1:
+                return value[1:end]
+            # unterminated quote — fall through, treat as bare value
+        return value
 
     # ------------------------------------------------------------------ #
     # validation                                                           #

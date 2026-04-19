@@ -1,5 +1,7 @@
 import logging
 
+from slack_sdk.errors import SlackApiError
+
 from assets.tailscale import _CONFIRMATION_ACCESS, getRequestModal
 
 from .common import send_access_request_to_admins
@@ -16,9 +18,12 @@ async def tailscale_access_command(ack, body, client):
             trigger_id=body.get("trigger_id"),
             view=await getRequestModal(),
         )
-        logger.info("tailscale modal invoked by %s", user_id)
-    except Exception as e:
-        logger.error("Failed to open modal for %s: %s", user_id, e)
+    except SlackApiError as e:
+        logger.error(
+            "views.open for %s: %s", user_id, e.response.get("error")
+        )
+        return
+    logger.info("tailscale modal invoked by %s", user_id)
 
 
 async def tailscale_access_command_submit(ack, body, client):
@@ -36,20 +41,14 @@ async def tailscale_access_command_submit(ack, body, client):
 
     logger.info(
         "tailscale access request: user=%s device=%s duration=%s reason=%s",
-        user_id,
-        device,
-        duration,
-        reason,
+        user_id, device, duration, reason,
     )
 
-    try:
-        request_id = await send_access_request_to_admins(
-            client,
-            requester_id=user_id,
-            device=device,
-            duration=duration,
-            reason=reason,
-        )
-        logger.info("dispatched access request %s to admins", request_id)
-    except Exception as e:
-        logger.error("failed to dispatch access request for %s: %s", user_id, e)
+    request_id = await send_access_request_to_admins(
+        client,
+        requester_id=user_id,
+        device=device,
+        duration=duration,
+        reason=reason,
+    )
+    logger.info("dispatched access request %s to admins", request_id)

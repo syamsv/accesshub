@@ -14,14 +14,14 @@ A single `access_requests` table keyed by an auto-increment integer id:
 """
 
 import asyncio
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 import aiosqlite
 
 import config
 
-_conn: Optional[aiosqlite.Connection] = None
+_conn: aiosqlite.Connection | None = None
 _init_lock = asyncio.Lock()
 
 _SCHEMA = """
@@ -41,13 +41,14 @@ CREATE TABLE IF NOT EXISTS access_requests (
     revoked_at     TEXT,
     creation_epoch INTEGER,
     acl_group_name TEXT,
-    acl_tag_name   TEXT,
     acl_dst        TEXT
 )
 """
 
 # Idempotent migrations for databases created before the lifecycle columns
-# existed. Re-running on an already-migrated DB is a no-op.
+# existed. Re-running on an already-migrated DB is a no-op. Old databases
+# may carry an extra `acl_tag_name` column from a dropped feature; it's
+# harmless and we no longer write it.
 _MIGRATIONS = (
     "ALTER TABLE access_requests ADD COLUMN grant_state TEXT",
     "ALTER TABLE access_requests ADD COLUMN granted_at TEXT",
@@ -55,7 +56,6 @@ _MIGRATIONS = (
     "ALTER TABLE access_requests ADD COLUMN revoked_at TEXT",
     "ALTER TABLE access_requests ADD COLUMN creation_epoch INTEGER",
     "ALTER TABLE access_requests ADD COLUMN acl_group_name TEXT",
-    "ALTER TABLE access_requests ADD COLUMN acl_tag_name TEXT",
     "ALTER TABLE access_requests ADD COLUMN acl_dst TEXT",
 )
 
@@ -84,15 +84,15 @@ async def _get_conn() -> aiosqlite.Connection:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 async def create_request(
     *,
     user_id: str,
-    device: Optional[str],
+    device: str | None,
     duration: str,
-    reason: Optional[str],
+    reason: str | None,
 ) -> str:
     conn = await _get_conn()
     cur = await conn.execute(
@@ -106,7 +106,7 @@ async def create_request(
     return str(cur.lastrowid)
 
 
-async def get_request(request_id: str) -> Optional[dict[str, Any]]:
+async def get_request(request_id: str) -> dict[str, Any] | None:
     conn = await _get_conn()
     async with conn.execute(
         "SELECT * FROM access_requests WHERE id = ?", (int(request_id),)
@@ -167,9 +167,8 @@ async def mark_granted(
     request_id: str,
     *,
     creation_epoch: int,
-    expires_at: Optional[str],
+    expires_at: str | None,
     acl_group_name: str,
-    acl_tag_name: Optional[str],
     acl_dst: str,
 ) -> None:
     conn = await _get_conn()
@@ -181,7 +180,6 @@ async def mark_granted(
             expires_at = ?,
             creation_epoch = ?,
             acl_group_name = ?,
-            acl_tag_name = ?,
             acl_dst = ?
         WHERE id = ?
         """,
@@ -190,7 +188,6 @@ async def mark_granted(
             expires_at,
             creation_epoch,
             acl_group_name,
-            acl_tag_name,
             acl_dst,
             int(request_id),
         ),
@@ -215,3 +212,27 @@ async def list_active_grants() -> list[dict[str, Any]]:
     ) as cur:
         rows = await cur.fetchall()
     return [dict(r) for r in rows]
+
+
+async def list_stuck_grants() -> list[dict[str, Any]]:
+    """Rows caught mid-grant or mid-revoke by a crash.
+
+    A crash between ``set_grant_state('granting')`` and ``mark_granted``
+    leaves either an orphaned ACL entry (POST succeeded, DB write didn't)
+    or nothing (POST never ran). Either way these rows need operator
+    attention.
+    """
+    conn = await _get_conn()
+    async with conn.execute(
+        "SELECT * FROM access_requests WHERE grant_state IN ('granting', 'revoking')"
+    ) as cur:
+        rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def close() -> None:
+    """Close the shared connection. Safe to call during shutdown."""
+    global _conn
+    if _conn is not None:
+        await _conn.close()
+        _conn = None

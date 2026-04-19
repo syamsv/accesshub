@@ -1,9 +1,12 @@
 import asyncio
+import contextlib
 import logging
 
 import config
+import db
 import slackbot
 from assets.tailscale import warm_services_cache
+from slackbot.grant import reconcile_stuck_grants
 
 
 def init():
@@ -44,10 +47,24 @@ when a request is approved the following workflow happens ,
 ]
 """
 
+async def _startup() -> None:
+    """Warm caches and reconcile any rows left stuck by a prior crash."""
+    await warm_services_cache()
+    await reconcile_stuck_grants()
+
+
 if __name__ == "__main__":
     init()
-    asyncio.run(warm_services_cache())
-    slackbot.Start(
-        signing_secret=config.SLACK_SIGNING_SECRET,
-        token=config.SLACK_BOT_TOKEN,
-    )
+    try:
+        asyncio.run(_startup())
+        slackbot.Start(
+            signing_secret=config.SLACK_SIGNING_SECRET,
+            token=config.SLACK_BOT_TOKEN,
+        )
+    finally:
+        # `asyncio.run` here spins up its own loop purely to close the
+        # shared aiosqlite connection cleanly; any WAL checkpointing
+        # happens on close. Swallow the (unlikely) RuntimeError if a
+        # loop is already running.
+        with contextlib.suppress(RuntimeError):
+            asyncio.run(db.close())
