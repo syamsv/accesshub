@@ -1,4 +1,3 @@
-import assets
 import config
 
 
@@ -15,4 +14,5 @@ def init():
 
 if __name__ == "__main__":
     init()
-    print(assets.calculateAccessDurationIntervals())
+    print(config.TAILNET)
+    print(config.TAILSCALE_API_KEY)
