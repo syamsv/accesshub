@@ -13,6 +13,15 @@ _SERVICES_TTL_SECONDS = 60
 _services_cache: tuple[float, list[dict]] | None = None  # (expires_at, options)
 _services_refresh_lock = asyncio.Lock()
 
+# Populated as a side-effect of _fetch_access_services so the grant flow can
+# resolve the chosen hostname to a Tailscale IP without a second API call.
+_device_ip_by_host: dict[str, str] = {}
+
+
+def get_device_ip(hostname: str) -> str | None:
+    """Return the cached Tailscale IP for a hostname, or None if unknown."""
+    return _device_ip_by_host.get(hostname)
+
 
 def _get_resource_tags() -> list[str]:
     """Parse `TAILSCALE_RESOURCE_TAGS` (comma-separated) from env.
@@ -255,6 +264,8 @@ async def _fetch_access_services() -> list[dict]:
         for d in resp.devices:
             if isinstance(d.hostname, str):
                 add(d.hostname)
+                if isinstance(d.addresses, list) and d.addresses:
+                    _device_ip_by_host[d.hostname] = d.addresses[0]
             if isinstance(d.tags, list):
                 for tag in d.tags:
                     add(tag)

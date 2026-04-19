@@ -4,6 +4,8 @@ import config
 import db
 from assets.tailscale import admin_request_blocks, format_duration
 
+from . import grant
+
 logger = logging.getLogger(__name__)
 
 
@@ -103,11 +105,20 @@ async def _decide(ack, body, client, action, decision: str) -> None:
         )
         return
 
-    # TODO: trigger the real grant/revoke here. For now just log to stdout.
     print(f"[access] request {request_id} {decision} by {admin_id}")
 
-    # Notify the original requester via DM.
+    # Run the real ACL grant only on approval. Failures inside
+    # perform_grant are logged and the DB row is marked 'failed'; we
+    # still notify the requester so they know the request was seen.
     req = await db.get_request(request_id)
+    if decision == "approved" and req:
+        ok = await grant.perform_grant(client, request_id=request_id, req=req)
+        if not ok:
+            logger.error("grant pipeline failed for %s", request_id)
+        # Re-read so the DM below reflects the grant_state.
+        req = await db.get_request(request_id)
+
+    # Notify the original requester via DM.
     if req:
         try:
             await client.chat_postMessage(
