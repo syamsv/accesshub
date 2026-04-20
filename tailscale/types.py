@@ -39,7 +39,7 @@ class Response(Generic[T]):
     status_code: HTTPStatus
     content: bytes
     headers: Any
-    parsed: Optional[T]
+    parsed: T | None
 
 
-__all__ = ["UNSET", "Unset", "Response"]
+__all__ = ["UNSET", "Response", "Unset"]

@@ -3,7 +3,7 @@
 Ref: https://tailscale.com/api#tag/policyfile
 """
 
-from typing import Any, Dict, List, Union
+from typing import Any, ClassVar
 
 from attrs import define, field
 
@@ -20,26 +20,26 @@ class ACL:
     still read it via ``acl.additional_properties["new_field"]``.
     """
 
-    acls: Union[Unset, List[Dict[str, Any]]] = UNSET
-    groups: Union[Unset, Dict[str, List[str]]] = UNSET
-    tag_owners: Union[Unset, Dict[str, List[str]]] = UNSET
-    hosts: Union[Unset, Dict[str, str]] = UNSET
-    tests: Union[Unset, List[Dict[str, Any]]] = UNSET
-    ssh: Union[Unset, List[Dict[str, Any]]] = UNSET
-    node_attrs: Union[Unset, List[Dict[str, Any]]] = UNSET
-    auto_approvers: Union[Unset, Dict[str, Any]] = UNSET
-    derp_map: Union[Unset, Dict[str, Any]] = UNSET
-    randomize_client_port: Union[Unset, bool] = UNSET
-    disable_ipv4: Union[Unset, bool] = UNSET
-    posture: Union[Unset, Dict[str, Any]] = UNSET
+    acls: Unset | list[dict[str, Any]] = UNSET
+    groups: Unset | dict[str, list[str]] = UNSET
+    tag_owners: Unset | dict[str, list[str]] = UNSET
+    hosts: Unset | dict[str, str] = UNSET
+    tests: Unset | list[dict[str, Any]] = UNSET
+    ssh: Unset | list[dict[str, Any]] = UNSET
+    node_attrs: Unset | list[dict[str, Any]] = UNSET
+    auto_approvers: Unset | dict[str, Any] = UNSET
+    derp_map: Unset | dict[str, Any] = UNSET
+    randomize_client_port: Unset | bool = UNSET
+    disable_ipv4: Unset | bool = UNSET
+    posture: Unset | dict[str, Any] = UNSET
 
-    additional_properties: Dict[str, Any] = field(factory=dict)
+    additional_properties: dict[str, Any] = field(factory=dict)
 
     # ------------------------------------------------------------------ #
     # (de)serialisation                                                   #
     # ------------------------------------------------------------------ #
 
-    _FIELD_MAP = {
+    _FIELD_MAP: ClassVar[dict[str, str]] = {
         "tag_owners": "tagOwners",
         "node_attrs": "nodeAttrs",
         "auto_approvers": "autoApprovers",
@@ -48,11 +48,13 @@ class ACL:
         "disable_ipv4": "disableIPv4",
     }
 
-    _FLAT_FIELDS = ("acls", "groups", "hosts", "tests", "ssh", "posture")
+    _FLAT_FIELDS: ClassVar[tuple[str, ...]] = (
+        "acls", "groups", "hosts", "tests", "ssh", "posture",
+    )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize to the JSON shape Tailscale expects (camelCase keys)."""
-        out: Dict[str, Any] = dict(self.additional_properties)
+        out: dict[str, Any] = dict(self.additional_properties)
         for py_name in self._FLAT_FIELDS:
             value = getattr(self, py_name)
             if not isinstance(value, Unset):
@@ -64,9 +66,9 @@ class ACL:
         return out
 
     @classmethod
-    def from_dict(cls, src: Dict[str, Any]) -> "ACL":
+    def from_dict(cls, src: dict[str, Any]) -> "ACL":
         data = dict(src)
-        kwargs: Dict[str, Any] = {}
+        kwargs: dict[str, Any] = {}
 
         for py_name, api_name in cls._FIELD_MAP.items():
             if api_name in data:

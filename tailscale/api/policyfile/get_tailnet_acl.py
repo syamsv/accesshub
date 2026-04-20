@@ -4,7 +4,7 @@ Ref: https://tailscale.com/api#tag/policyfile/get/tailnet/{tailnet}/acl
 """
 
 from http import HTTPStatus
-from typing import Any, Dict, Optional
+from typing import Any
 from urllib.parse import quote
 
 import httpx
@@ -15,7 +15,7 @@ from ...models.acl import ACL
 from ...types import Response
 
 
-def _get_kwargs(tailnet: str) -> Dict[str, Any]:
+def _get_kwargs(tailnet: str) -> dict[str, Any]:
     # `tailnet` can be "-" (the default tailnet) or a full name like "example.com".
     # Request JSON explicitly — Tailscale serves HuJSON by default for this endpoint.
     return {
@@ -27,7 +27,7 @@ def _get_kwargs(tailnet: str) -> Dict[str, Any]:
 
 def _parse_response(
     *, client: AuthenticatedClient, response: httpx.Response
-) -> Optional[ACL]:
+) -> ACL | None:
     if response.status_code == 200:
         return ACL.from_dict(response.json())
     if client.raise_on_unexpected_status:
@@ -70,6 +70,6 @@ async def asyncio(
     tailnet: str,
     *,
     client: AuthenticatedClient,
-) -> Optional[ACL]:
+) -> ACL | None:
     """Like :func:`asyncio_detailed` but returns only the parsed body."""
     return (await asyncio_detailed(tailnet, client=client)).parsed

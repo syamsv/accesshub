@@ -8,7 +8,7 @@ Ref: https://tailscale.com/api#tag/policyfile/post/tailnet/{tailnet}/acl/validat
 """
 
 from http import HTTPStatus
-from typing import Any, Dict, Optional, Union
+from typing import Any
 from urllib.parse import quote
 
 import httpx
@@ -22,8 +22,8 @@ from ...types import Response
 def _get_kwargs(
     tailnet: str,
     *,
-    body: Union[ACL, Dict[str, Any]],
-) -> Dict[str, Any]:
+    body: ACL | dict[str, Any],
+) -> dict[str, Any]:
     payload = body.to_dict() if isinstance(body, ACL) else body
     return {
         "method": "post",
@@ -38,7 +38,7 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient, response: httpx.Response
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Tailscale returns 200 for both success and validation failure.
 
     Success: empty body (or ``{}``).
@@ -58,7 +58,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient, response: httpx.Response
-) -> Response[Dict[str, Any]]:
+) -> Response[dict[str, Any]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -71,8 +71,8 @@ async def asyncio_detailed(
     tailnet: str,
     *,
     client: AuthenticatedClient,
-    body: Union[ACL, Dict[str, Any]],
-) -> Response[Dict[str, Any]]:
+    body: ACL | dict[str, Any],
+) -> Response[dict[str, Any]]:
     """Validate a proposed policy file and run its embedded tests."""
     kwargs = _get_kwargs(tailnet, body=body)
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -83,8 +83,8 @@ async def asyncio(
     tailnet: str,
     *,
     client: AuthenticatedClient,
-    body: Union[ACL, Dict[str, Any]],
-) -> Optional[Dict[str, Any]]:
+    body: ACL | dict[str, Any],
+) -> dict[str, Any] | None:
     """Like :func:`asyncio_detailed` but returns only the parsed body.
 
     An empty dict (``{}``) means the policy validated cleanly. A dict

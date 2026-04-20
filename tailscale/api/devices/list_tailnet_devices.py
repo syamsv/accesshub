@@ -4,7 +4,7 @@ Ref: https://tailscale.com/api#tag/devices/get/tailnet/{tailnet}/devices
 """
 
 from http import HTTPStatus
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 from urllib.parse import quote
 
 import httpx
@@ -19,10 +19,10 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     tailnet: str,
     *,
-    fields: Union[Unset, ListTailnetDevicesFields] = UNSET,
-    tags: Union[Unset, List[str], str] = UNSET,
-) -> Dict[str, Any]:
-    params: Dict[str, Any] = {}
+    fields: Unset | ListTailnetDevicesFields = UNSET,
+    tags: Unset | list[str] | str = UNSET,
+) -> dict[str, Any]:
+    params: dict[str, Any] = {}
 
     if not isinstance(fields, Unset):
         params["fields"] = fields.value if isinstance(fields, ListTailnetDevicesFields) else fields
@@ -43,7 +43,7 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient, response: httpx.Response
-) -> Optional[ListTailnetDevicesResponse]:
+) -> ListTailnetDevicesResponse | None:
     if response.status_code == 200:
         return ListTailnetDevicesResponse.from_dict(response.json())
     if client.raise_on_unexpected_status:
@@ -66,8 +66,8 @@ async def asyncio_detailed(
     tailnet: str,
     *,
     client: AuthenticatedClient,
-    fields: Union[Unset, ListTailnetDevicesFields] = UNSET,
-    tags: Union[Unset, List[str], str] = UNSET,
+    fields: Unset | ListTailnetDevicesFields = UNSET,
+    tags: Unset | list[str] | str = UNSET,
 ) -> Response[ListTailnetDevicesResponse]:
     """List every device in `tailnet`, returning the full `Response` wrapper.
 
@@ -93,9 +93,9 @@ async def asyncio(
     tailnet: str,
     *,
     client: AuthenticatedClient,
-    fields: Union[Unset, ListTailnetDevicesFields] = UNSET,
-    tags: Union[Unset, List[str], str] = UNSET,
-) -> Optional[ListTailnetDevicesResponse]:
+    fields: Unset | ListTailnetDevicesFields = UNSET,
+    tags: Unset | list[str] | str = UNSET,
+) -> ListTailnetDevicesResponse | None:
     """Like :func:`asyncio_detailed` but returns only the parsed body."""
     return (
         await asyncio_detailed(tailnet, client=client, fields=fields, tags=tags)

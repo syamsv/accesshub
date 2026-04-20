@@ -1,16 +1,23 @@
 import asyncio
 import contextlib
 import logging
+import signal
 
 import config
 import db
 import slackbot
 from assets.tailscale import warm_services_cache
+from cleaner.run import loop as cleaner_loop
 from slackbot.grant import reconcile_stuck_grants
 
+logger = logging.getLogger(__name__)
 
-def init():
-    logging.basicConfig(level=logging.INFO)
+
+def init() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
     config.init(
         env_file=".env",
         required=[
@@ -24,47 +31,53 @@ def init():
     )
 
 
-"""
-when a request is approved the following workflow happens ,
-1 - current acl gets fetched (stores to some place - later to be added )
-2 - addes a group with custom name `group:accesshub-<REQUEST_ID>-<CREATION_TIME>-<DURATION_in_MINUTES>`
-3 - check if the user is asking for a tag or a machine
-    3.1 - if machine a tag is created with `tag:accesshub-<REQUEST_ID>-<CREATION_TIME>-<DURATION_in_MINUTES>`
-    3.2 - tailscale_ip:* as dst
-    3.3 - tag gets stored
-4 - acl rule is added with gtoup ans tag to access lke below (validate)
-5 - validates the time befiore commiting as we will be deploying a seperate funcition that edits the acl every 5 min for removal
+async def _main() -> None:
+    """Run the Slack bot and the ACL cleaner on one event loop.
 
-
-
-"acls": [
-
-	{
-		"action": "accept",
-		"src":    [group:accesshub-<REQUEST_ID>-<CREATION_TIME>-<DURATION_in_MINUTES>],
-		"dst":    [anything],
-	},
-]
-"""
-
-async def _startup() -> None:
-    """Warm caches and reconcile any rows left stuck by a prior crash."""
+    Both services share the same ``aiosqlite`` connection and cooperate
+    with Tailscale through its ETag-based concurrency, so the bot can
+    mutate the policy file while the cleaner is mid-cycle without
+    corrupting either side's view.
+    """
+    # Pre-flight: populate device cache and reconcile any rows left
+    # in-flight by a prior crash before we start accepting traffic.
     await warm_services_cache()
     await reconcile_stuck_grants()
+
+    stop_event = asyncio.Event()
+    running_loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        with contextlib.suppress(NotImplementedError):
+            running_loop.add_signal_handler(sig, stop_event.set)
+
+    # Start the Bolt HTTP server on *our* event loop.
+    runner = await slackbot.start_async(
+        signing_secret=config.SLACK_SIGNING_SECRET,
+        token=config.SLACK_BOT_TOKEN,
+    )
+
+    # Kick the cleaner loop off as a sibling task. It consults
+    # ``stop_event`` between ticks so SIGINT/SIGTERM exits it cleanly
+    # without cancellation.
+    cleaner_task = asyncio.create_task(cleaner_loop(stop_event), name="cleaner")
+    logger.info("accesshub ready — bot + cleaner running")
+
+    try:
+        await stop_event.wait()
+        logger.info("shutdown signal received")
+    finally:
+        # Cleaner exits on its own once stop_event is set; just await it.
+        with contextlib.suppress(asyncio.CancelledError):
+            await cleaner_task
+        await runner.cleanup()
 
 
 if __name__ == "__main__":
     init()
     try:
-        asyncio.run(_startup())
-        slackbot.Start(
-            signing_secret=config.SLACK_SIGNING_SECRET,
-            token=config.SLACK_BOT_TOKEN,
-        )
+        asyncio.run(_main())
     finally:
-        # `asyncio.run` here spins up its own loop purely to close the
-        # shared aiosqlite connection cleanly; any WAL checkpointing
-        # happens on close. Swallow the (unlikely) RuntimeError if a
-        # loop is already running.
+        # One last loop to close the shared aiosqlite connection cleanly
+        # so WAL checkpoint runs and .db-wal/.db-shm are trimmed.
         with contextlib.suppress(RuntimeError):
             asyncio.run(db.close())

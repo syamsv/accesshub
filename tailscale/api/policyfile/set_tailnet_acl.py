@@ -4,7 +4,7 @@ Ref: https://tailscale.com/api#tag/policyfile/post/tailnet/{tailnet}/acl
 """
 
 from http import HTTPStatus
-from typing import Any, Dict, Optional, Union
+from typing import Any
 from urllib.parse import quote
 
 import httpx
@@ -18,10 +18,10 @@ from ...types import Response
 def _get_kwargs(
     tailnet: str,
     *,
-    body: Union[ACL, Dict[str, Any]],
-    if_match: Optional[str] = None,
-) -> Dict[str, Any]:
-    headers: Dict[str, str] = {
+    body: ACL | dict[str, Any],
+    if_match: str | None = None,
+) -> dict[str, Any]:
+    headers: dict[str, str] = {
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
@@ -40,7 +40,7 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient, response: httpx.Response
-) -> Optional[ACL]:
+) -> ACL | None:
     if response.status_code == 200:
         return ACL.from_dict(response.json())
     if client.raise_on_unexpected_status:
@@ -63,8 +63,8 @@ async def asyncio_detailed(
     tailnet: str,
     *,
     client: AuthenticatedClient,
-    body: Union[ACL, Dict[str, Any]],
-    if_match: Optional[str] = None,
+    body: ACL | dict[str, Any],
+    if_match: str | None = None,
 ) -> Response[ACL]:
     """Replace the policy file.
 
@@ -89,9 +89,9 @@ async def asyncio(
     tailnet: str,
     *,
     client: AuthenticatedClient,
-    body: Union[ACL, Dict[str, Any]],
-    if_match: Optional[str] = None,
-) -> Optional[ACL]:
+    body: ACL | dict[str, Any],
+    if_match: str | None = None,
+) -> ACL | None:
     """Like :func:`asyncio_detailed` but returns only the parsed body."""
     return (
         await asyncio_detailed(tailnet, client=client, body=body, if_match=if_match)

@@ -19,15 +19,15 @@ Example::
         print(d.id, d.hostname)
 """
 
-from .client import AuthenticatedClient, TAILSCALE_API_BASE_URL
+from .client import TAILSCALE_API_BASE_URL, AuthenticatedClient
 from .errors import UnexpectedStatus
 from .types import UNSET, Response, Unset
 
 __all__ = [
-    "AuthenticatedClient",
     "TAILSCALE_API_BASE_URL",
-    "UnexpectedStatus",
     "UNSET",
+    "AuthenticatedClient",
     "Response",
+    "UnexpectedStatus",
     "Unset",
 ]

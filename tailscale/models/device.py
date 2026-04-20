@@ -3,7 +3,7 @@
 Ref: https://tailscale.com/api#tag/devices
 """
 
-from typing import Any, Dict, List, Union
+from typing import Any, ClassVar
 
 from attrs import define, field
 
@@ -23,37 +23,37 @@ class Device:
     """
 
     id: str
-    node_id: Union[Unset, str] = UNSET
-    user: Union[Unset, str] = UNSET
-    name: Union[Unset, str] = UNSET
-    hostname: Union[Unset, str] = UNSET
-    client_version: Union[Unset, str] = UNSET
-    os: Union[Unset, str] = UNSET
-    addresses: Union[Unset, List[str]] = UNSET
-    created: Union[Unset, str] = UNSET
-    last_seen: Union[Unset, str] = UNSET
-    expires: Union[Unset, str] = UNSET
-    key_expiry_disabled: Union[Unset, bool] = UNSET
-    authorized: Union[Unset, bool] = UNSET
-    is_external: Union[Unset, bool] = UNSET
-    update_available: Union[Unset, bool] = UNSET
-    machine_key: Union[Unset, str] = UNSET
-    node_key: Union[Unset, str] = UNSET
-    blocks_incoming_connections: Union[Unset, bool] = UNSET
-    enabled_routes: Union[Unset, List[str]] = UNSET
-    advertised_routes: Union[Unset, List[str]] = UNSET
-    tags: Union[Unset, List[str]] = UNSET
-    client_connectivity: Union[Unset, Dict[str, Any]] = UNSET
-    tailnet_lock_error: Union[Unset, str] = UNSET
-    tailnet_lock_key: Union[Unset, str] = UNSET
+    node_id: Unset | str = UNSET
+    user: Unset | str = UNSET
+    name: Unset | str = UNSET
+    hostname: Unset | str = UNSET
+    client_version: Unset | str = UNSET
+    os: Unset | str = UNSET
+    addresses: Unset | list[str] = UNSET
+    created: Unset | str = UNSET
+    last_seen: Unset | str = UNSET
+    expires: Unset | str = UNSET
+    key_expiry_disabled: Unset | bool = UNSET
+    authorized: Unset | bool = UNSET
+    is_external: Unset | bool = UNSET
+    update_available: Unset | bool = UNSET
+    machine_key: Unset | str = UNSET
+    node_key: Unset | str = UNSET
+    blocks_incoming_connections: Unset | bool = UNSET
+    enabled_routes: Unset | list[str] = UNSET
+    advertised_routes: Unset | list[str] = UNSET
+    tags: Unset | list[str] = UNSET
+    client_connectivity: Unset | dict[str, Any] = UNSET
+    tailnet_lock_error: Unset | str = UNSET
+    tailnet_lock_key: Unset | str = UNSET
 
-    additional_properties: Dict[str, Any] = field(factory=dict)
+    additional_properties: dict[str, Any] = field(factory=dict)
 
     # ------------------------------------------------------------------ #
     # (de)serialisation                                                   #
     # ------------------------------------------------------------------ #
 
-    _FIELD_MAP = {
+    _FIELD_MAP: ClassVar[dict[str, str]] = {
         "node_id": "nodeId",
         "client_version": "clientVersion",
         "last_seen": "lastSeen",
@@ -70,9 +70,9 @@ class Device:
         "tailnet_lock_key": "tailnetLockKey",
     }
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize to the JSON shape Tailscale expects (camelCase keys)."""
-        out: Dict[str, Any] = dict(self.additional_properties)
+        out: dict[str, Any] = dict(self.additional_properties)
         for py_name, api_name in (
             ("id", "id"),
             ("user", "user"),
@@ -92,14 +92,14 @@ class Device:
         return out
 
     @classmethod
-    def from_dict(cls, src: Dict[str, Any]) -> "Device":
+    def from_dict(cls, src: dict[str, Any]) -> "Device":
         data = dict(src)
         if "id" not in data or not data["id"]:
             raise ValueError(f"Tailscale Device payload is missing 'id': {src!r}")
         device_id = data.pop("id")
 
         # camelCase → snake_case for the known mappings
-        kwargs: Dict[str, Any] = {"id": device_id}
+        kwargs: dict[str, Any] = {"id": device_id}
         for py_name, api_name in cls._FIELD_MAP.items():
             if api_name in data:
                 kwargs[py_name] = data.pop(api_name)

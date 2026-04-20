@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class ListTailnetDevicesFields(str, Enum):
+class ListTailnetDevicesFields(StrEnum):
     """Value for the `fields` query param on `GET /tailnet/{tailnet}/devices`.
 
     - ``DEFAULT`` — the common fields (default if not specified)
@@ -11,6 +11,3 @@ class ListTailnetDevicesFields(str, Enum):
 
     DEFAULT = "default"
     ALL = "all"
-
-    def __str__(self) -> str:
-        return self.value
