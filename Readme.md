@@ -2,7 +2,7 @@
 
 AccessHub is a Slack bot that turns Tailscale ACL (for now , features comming) changes into a self-service workflow. 
 
-![Tailscale request modal](docs/images/modal.png)
+<img src="docs/img/modal.png" alt="Tailscale Access request access form in Slack" width="400"/>
 
 ## Setup
 
