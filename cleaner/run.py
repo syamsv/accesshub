@@ -28,6 +28,7 @@ from tailscale.api.policyfile import (
     set_tailnet_acl,
     validate_tailnet_acl,
 )
+from utils.backup import backup_acl
 
 from .expiry import ParsedName, apply_cleanup, find_expired_groups
 
@@ -112,6 +113,14 @@ async def run_once() -> int:
                 "[cleaner] removing %d expired group(s): %s",
                 len(expired), [p.name for p in expired],
             )
+
+            # Snapshot pre-mutation ACL before we touch anything — fail
+            # closed if we can't take a backup.
+            try:
+                await backup_acl(acl.to_dict())
+            except OSError as e:
+                logger.error("[cleaner] acl backup failed, aborting cycle: %s", e)
+                return 0
 
             apply_cleanup(acl, expired)
 

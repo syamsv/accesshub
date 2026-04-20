@@ -37,6 +37,7 @@ from tailscale.api.policyfile import (
     validate_tailnet_acl,
 )
 from tailscale.models import ACL
+from utils.backup import backup_acl
 
 logger = logging.getLogger(__name__)
 
@@ -251,6 +252,13 @@ async def _run_grant(
         etag = get_resp.headers.get("ETag")
         if not etag:
             return False, "Tailscale response missing ETag — refusing unsafe POST"
+
+        # Snapshot the pre-mutation ACL so we can roll back by hand if
+        # something downstream goes wrong. Fail closed on disk errors.
+        try:
+            await backup_acl(acl.to_dict())
+        except OSError as e:
+            return False, f"acl backup failed: {e}"
 
         _apply_mutation(acl, email=email, group_name=group_name, dst=dst)
 
