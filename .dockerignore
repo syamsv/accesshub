@@ -1,0 +1,36 @@
+# vcs
+.git/
+.gitignore
+
+# python caches
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+
+# virtual envs
+venv/
+.venv/
+env/
+
+# tests + local-only sources
+tests/
+examples/
+
+# local secrets & state — never let these leak into an image
+.env
+.env.*
+accesshub.db
+accesshub.db-wal
+accesshub.db-shm
+backup/
+sqlite_db/
+
+# editor / IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
